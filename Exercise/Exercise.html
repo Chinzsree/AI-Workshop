@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Usage Counter App</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom styles for cleaner focus state */
+        .btn {
+            transition: all 0.2s;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+        }
+        .btn:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+        .btn:active {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            box-shadow: none;
+            transform: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 flex items-center justify-center min-h-screen p-4 font-sans">
+
+    <div id="app-container" class="bg-white p-6 sm:p-8 rounded-xl shadow-2xl w-full max-w-lg">
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">API Usage Counter</h1>
+        
+        <!-- Status and Current Count Display -->
+        <div class="bg-indigo-50 border border-indigo-200 p-4 rounded-lg mb-6">
+            <div id="status-display" class="text-sm font-medium text-indigo-800 mb-2">
+                Status: Enter a name to start.
+            </div>
+            <div class="text-xl font-extrabold text-indigo-700 flex justify-between items-center">
+                Current Count:
+                <span id="count-display" class="text-3xl text-indigo-900 ml-4">--</span>
+            </div>
+            <p id="name-display" class="text-sm text-indigo-600 mt-2 italic hidden"></p>
+        </div>
+
+        <!-- Name Input and Start Button -->
+        <div id="name-setup" class="flex flex-col sm:flex-row gap-3 mb-6">
+            <input type="text" id="name-input" placeholder="Enter your unique name"
+                   class="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-gray-700">
+            <button id="start-btn" onclick="saveName()" disabled
+                    class="btn bg-indigo-600 text-white font-semibold py-3 px-6 rounded-lg hover:bg-indigo-700 whitespace-nowrap">
+                Start (Save Name)
+            </button>
+        </div>
+
+        <!-- Counter Actions -->
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            
+            <button id="increment-btn" onclick="incrementCount()" disabled
+                    class="btn bg-green-500 text-white font-semibold py-3 px-4 rounded-lg hover:bg-green-600 col-span-2 sm:col-span-1">
+                Increment (POST & GET)
+            </button>
+
+            <button id="refresh-btn" onclick="fetchCount(false)" disabled
+                    class="btn bg-blue-500 text-white font-semibold py-3 px-4 rounded-lg hover:bg-blue-600">
+                Refresh (GET)
+            </button>
+            
+            <button id="forget-btn" onclick="forgetName()" disabled
+                    class="btn bg-red-500 text-white font-semibold py-3 px-4 rounded-lg hover:bg-red-600">
+                Forget
+            </button>
+        </div>
+        
+        <!-- Message Box for API Errors -->
+        <div id="message-box" class="mt-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg hidden" role="alert">
+            <p id="message-text" class="text-sm"></p>
+        </div>
+
+    </div>
+
+    <script>
+        // Global state and constants
+        const API_URL = 'https://api.magiqspark.com/counter/';
+        let savedName = null;
+
+        // UI element references
+        const nameInput = document.getElementById('name-input');
+        const startBtn = document.getElementById('start-btn');
+        const incrementBtn = document.getElementById('increment-btn');
+        const refreshBtn = document.getElementById('refresh-btn');
+        const forgetBtn = document.getElementById('forget-btn');
+        const countDisplay = document.getElementById('count-display');
+        const statusDisplay = document.getElementById('status-display');
+        const nameDisplay = document.getElementById('name-display');
+        const messageBox = document.getElementById('message-box');
+        const messageText = document.getElementById('message-text');
+
+        // --- Utility Functions ---
+
+        /**
+         * Hides or displays the error message box.
+         * @param {string | null} message - The error message, or null to hide the box.
+         */
+        function showMessage(message) {
+            if (message) {
+                messageText.textContent = message;
+                messageBox.classList.remove('hidden');
+                console.error("API Error:", message);
+            } else {
+                messageBox.classList.add('hidden');
+                messageText.textContent = '';
+            }
+        }
+
+        /**
+         * Handles fetching with exponential backoff retry logic.
+         * @param {string} url - The API URL.
+         * @param {object} options - Fetch options (method, headers, body, etc.).
+         * @param {number} maxRetries - Maximum number of retry attempts.
+         * @returns {Promise<Response>} The fetch response object.
+         */
+        async function fetchWithRetry(url, options = {}, maxRetries = 5) {
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (response.ok) {
+                        return response;
+                    }
+                    // If not OK, but not a network error, retry might still help
+                    throw new Error(`HTTP Error ${response.status}: ${response.statusText}`);
+                } catch (error) {
+                    if (i === maxRetries - 1) {
+                        // Throw on last attempt
+                        throw new Error(`Request failed after ${maxRetries} attempts. Details: ${error.message}`);
+                    }
+                    // Calculate delay with exponential backoff (1s, 2s, 4s, 8s, 16s...)
+                    const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                    // console.log(`Retrying in ${delay.toFixed(0)}ms... (Attempt ${i + 1}/${maxRetries})`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+        }
+
+
+        // --- UI State Management ---
+
+        /**
+         * Updates the UI based on whether a name is saved or not.
+         */
+        function updateUIState() {
+            const isNameSet = savedName !== null;
+
+            // Update Input/Start Section
+            nameInput.disabled = isNameSet;
+            nameInput.value = isNameSet ? savedName : '';
+            startBtn.disabled = isNameSet || nameInput.value.trim() === '';
+
+            // Update Action Buttons
+            incrementBtn.disabled = !isNameSet;
+            refreshBtn.disabled = !isNameSet;
+            forgetBtn.disabled = !isNameSet;
+            
+            // Update Displays
+            nameDisplay.textContent = isNameSet ? `Tracking Name: ${savedName}` : '';
+            if (isNameSet) {
+                nameDisplay.classList.remove('hidden');
+                statusDisplay.textContent = "Status: Ready to increment or refresh.";
+            } else {
+                nameDisplay.classList.add('hidden');
+                statusDisplay.textContent = "Status: Enter a name to start.";
+                countDisplay.textContent = '--';
+            }
+            showMessage(null); // Clear any old errors
+        }
+
+        // --- Core Application Logic ---
+
+        /**
+         * Saves the name from the input field and triggers the first refresh.
+         */
+        function saveName() {
+            const name = nameInput.value.trim();
+            if (name) {
+                savedName = name;
+                updateUIState();
+                fetchCount(true); // Initial fetch after saving name
+            } else {
+                showMessage("Please enter a non-empty name.");
+            }
+        }
+
+        /**
+         * Clears the saved name and resets the UI.
+         */
+        function forgetName() {
+            savedName = null;
+            updateUIState();
+            showMessage(null);
+            console.log("Name forgotten. App reset.");
+        }
+
+        /**
+         * Performs the POST request to increment the counter, then fetches the new count.
+         */
+        async function incrementCount() {
+            if (!savedName) return;
+
+            showMessage(null); // Clear previous messages
+            statusDisplay.textContent = "Status: Incrementing...";
+
+            const url = `${API_URL}?name=${encodeURIComponent(savedName)}`;
+            
+            try {
+                // 1. POST Request (Increment)
+                const postResponse = await fetchWithRetry(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    // Sending a simple body is often required for POST, though
+                    // the name is in the query params for simple API design.
+                    body: JSON.stringify({ name: savedName, action: 'increment' })
+                });
+
+                if (postResponse.ok) {
+                    // 2. Success, now fetch the updated count
+                    statusDisplay.textContent = "Status: Increment successful. Refreshing count...";
+                    await fetchCount(false); // Call fetchCount to get the updated value
+                } else {
+                    const errorData = await postResponse.text();
+                    throw new Error(`Failed to increment count. Server said: ${errorData || postResponse.statusText}`);
+                }
+
+            } catch (error) {
+                statusDisplay.textContent = "Status: Error occurred.";
+                showMessage(`Increment failed: ${error.message}`);
+            }
+        }
+
+        /**
+         * Performs the GET request to fetch the current counter value.
+         * @param {boolean} isInitialFetch - True if called right after saving the name.
+         */
+        async function fetchCount(isInitialFetch) {
+            if (!savedName) return;
+
+            showMessage(null); // Clear previous messages
+            const actionText = isInitialFetch ? "Initial fetch..." : "Refreshing...";
+            statusDisplay.textContent = `Status: ${actionText}`;
+            countDisplay.textContent = '...';
+
+            const url = `${API_URL}?name=${encodeURIComponent(savedName)}`;
+            
+            try {
+                // 1. GET Request (Fetch Count)
+                const getResponse = await fetchWithRetry(url, { method: 'GET' });
+
+                if (getResponse.ok) {
+                    const data = await getResponse.json();
+                    
+                    // Assuming the API returns a JSON object like { count: 123 }
+                    const count = data.count !== undefined ? data.count : "N/A (Bad format)";
+
+                    countDisplay.textContent = count;
+                    statusDisplay.textContent = `Status: Count refreshed successfully.`;
+                } else {
+                    const errorData = await getResponse.text();
+                    throw new Error(`Failed to fetch count. Server said: ${errorData || getResponse.statusText}`);
+                }
+            } catch (error) {
+                statusDisplay.textContent = "Status: Error occurred.";
+                countDisplay.textContent = 'ERROR';
+                showMessage(`Refresh failed: ${error.message}`);
+            }
+        }
+
+        /**
+         * Initializes the application state, checking for URL parameters.
+         */
+        function init() {
+            // Event listener for input change to enable the start button
+            nameInput.addEventListener('input', () => {
+                startBtn.disabled = savedName !== null || nameInput.value.trim() === '';
+            });
+
+            // Check for optional ?name=foo parameter
+            const params = new URLSearchParams(window.location.search);
+            const autoName = params.get('name');
+
+            if (autoName) {
+                savedName = autoName;
+                nameInput.value = autoName;
+                console.log(`Auto-starting with name: ${autoName}`);
+            }
+            
+            // Set initial UI state and perform initial fetch if name is set
+            updateUIState();
+            if (savedName) {
+                fetchCount(true);
+            }
+        }
+
+        // Run initialization when the window loads
+        window.onload = init;
+
+    </script>
+</body>
+</html>

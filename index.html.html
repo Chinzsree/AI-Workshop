@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Orders — Card Grid + Smart Assistant</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .thin-scrollbar { scrollbar-width: thin; }
+    .thin-scrollbar::-webkit-scrollbar { width: 8px; }
+    .thin-scrollbar::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 6px; }
+    /* Tailwind CSS for the assistant toggle switch in wire() */
+    #assistantToggle:checked + #assistantSwitch { background-color: rgb(79 70 229 / 0.2); }
+    #assistantToggle:checked + #assistantSwitch #assistantKnob { transform: translateX(16px); }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-800">
+  <header class="sticky top-0 z-20 backdrop-blur bg-white/80 border-b border-slate-200">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <svg class="w-7 h-7 text-amber-600" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 8a5 5 0 0 0 5 5h6a5 5 0 0 0 5-5H3Zm2 7a2 2 0 0 0 2 2h10a2 2 0 1 0 0-4H7a2 2 0 0 0-2 2Z"/></svg>
+        <div>
+          <h1 class="text-xl sm:text-2xl font-bold tracking-tight">Orders — Card Grid</h1>
+          <p class="text-xs sm:text-sm text-slate-500">UI surface + data fields + light Smart Assistant</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <input type="file" id="csvFileInput" accept=".csv" class="hidden" />
+        <button id="uploadCsvBtn" class="px-3 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-500">Upload CSV</button>
+        <button id="resetDataBtn" class="px-3 py-2 rounded-xl bg-red-600 text-white text-sm font-medium hover:bg-red-500">Reset Data</button>
+        <button id="addDemoBtn" class="px-3 py-2 rounded-xl bg-amber-600 text-white text-sm font-medium hover:bg-amber-500">+ Add Demo Order</button>
+        <button id="seedBtn" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800">Seed 6</button>
+      </div>
+    </div>
+  </header>
+
+  <section class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+    <div class="lg:col-span-7 p-4 bg-white rounded-2xl border border-slate-200 shadow-sm">
+      <h2 class="text-sm font-semibold mb-2">Data fields shown on each card</h2>
+      <ul class="text-sm text-slate-700 list-disc list-inside grid gap-1 sm:grid-cols-2 md:grid-cols-3">
+        <li><span class="font-medium">Customer:</span> name (string)</li>
+        <li><span class="font-medium">Items:</span> array of { name, qty }</li>
+        <li><span class="font-medium">Status:</span> <code class="px-1 rounded bg-slate-100">waiting</code>, <code class="px-1 rounded bg-slate-100">in progress</code>, <code class="px-1 rounded bg-slate-100">ready</code>, <code class="px-1 rounded bg-slate-100">cancelled</code> (CSV)</li>
+        <li><span class="font-medium">Payment:</span> <code class="px-1 rounded bg-slate-100">Cash</code>, <code class="px-1 rounded bg-slate-100">Card</code>, <code class="px-1 rounded bg-slate-100">UPI</code>, <code class="px-1 rounded bg-slate-100">Wallet</code> (CSV)</li>
+        <li><span class="font-medium">Timestamp:</span> ISO string; displayed as HH:MM</li>
+        <li><span class="font-medium">Order ID:</span> short unique id</li>
+        <li><span class="font-medium">Price:</span> total order price (CSV)</li>
+      </ul>
+    </div>
+    <div class="lg:col-span-5 p-4 bg-white rounded-2xl border border-slate-200 shadow-sm">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-semibold">Smart Assistant</h3>
+        <label class="inline-flex items-center cursor-pointer select-none">
+          <input type="checkbox" id="assistantToggle" class="sr-only" checked>
+          <span id="assistantSwitch" class="w-10 h-6 flex items-center bg-slate-200 rounded-full p-1 duration-200">
+            <span id="assistantKnob" class="bg-white w-4 h-4 rounded-full shadow transform duration-200 translate-x-4"></span>
+          </span>
+        </label>
+      </div>
+      <p class="text-xs text-slate-500 mt-1">Model-agnostic, rule-based hints (no external calls).</p>
+      <div id="assistantList" class="mt-3 space-y-2"></div>
+    </div>
+  </section>
+
+  <main class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 mt-2 pb-16">
+    <div id="importSummary" class="hidden fixed bottom-4 right-4 max-w-sm w-full p-4 bg-white rounded-xl shadow-xl border border-slate-200 z-50">
+      <div class="flex items-center justify-between">
+        <p class="text-sm font-medium" id="summaryText"></p>
+        <button onclick="document.getElementById('importSummary').classList.add('hidden')" class="text-slate-400 hover:text-slate-600">&times;</button>
+      </div>
+      <div id="errorListContainer" class="mt-2 text-xs hidden">
+        <button id="toggleErrorsBtn" class="text-indigo-600 hover:text-indigo-500 font-medium">Show/Hide Errors</button>
+        <ul id="errorDetails" class="list-disc list-inside mt-1 p-2 bg-red-50 text-red-700 rounded-lg max-h-40 overflow-y-auto thin-scrollbar hidden"></ul>
+      </div>
+    </div>
+    <div id="ordersGrid" class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"></div>
+  </main>
+
+  <template id="orderCardTpl">
+    <div class="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-3">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="statusBadge text-xs px-2 py-1 rounded-full font-medium"></span>
+            <span class="payBadge text-xs px-2 py-1 rounded-full font-medium bg-slate-50 text-slate-700 border border-slate-200"></span>
+          </div>
+          <h3 class="customer text-base font-semibold mt-2"></h3>
+          <p class="id text-xs text-slate-500"></p>
+        </div>
+        <div class="text-xs text-slate-500 text-right">
+          <p>Placed</p>
+          <p class="ts font-medium"></p>
+          <p class="price text-sm font-bold text-slate-800 mt-1"></p>
+        </div>
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">Items</p>
+        <ul class="items text-sm font-medium list-disc list-inside space-y-0.5"></ul>
+      </div>
+    </div>
+  </template>
+
+  <script>
+    // ------- State & Types -------
+    let orders = []; // {id, customer, items:[{name,qty}], status, payment, ts, priceTotal}
+    let defaultOrders = []; // To store the initial data for Reset
+
+    const VALID_STATUSES = ['waiting','in progress','ready', 'cancelled'];
+    const VALID_PAYMENTS = ['Cash','Card','UPI', 'Wallet'];
+    // Normalize to lowercase for validation
+    const STATUSES = VALID_STATUSES.map(s => s.toLowerCase());
+    const PAYMENTS = VALID_PAYMENTS.map(p => p.toLowerCase());
+
+    const DEMO_NAMES = ['Aarav','Isha','Rahul','Ananya','Kabir','Meera','Rohit','Zara'];
+    const MENU = ['Espresso','Americano','Latte','Cappuccino','Mocha','Croissant','Muffin','Cookie'];
+
+    const pastrySet = new Set(['Croissant','Muffin','Cookie']);
+    const espressoSet = new Set(['Espresso','Americano','Latte','Cappuccino','Mocha','Flat White']);
+
+    const $ = (sel, root=document) => root.querySelector(sel);
+    const uid = (p='id') => `${p}_${Math.random().toString(36).slice(2,8)}${Date.now().toString(36).slice(-3)}`;
+    const fmtTime = ts => new Date(ts).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    const minutesSince = ts => Math.floor((Date.now() - new Date(ts).getTime())/60000);
+    const fmtCurrency = price => `\$${parseFloat(price).toFixed(2)}`;
+
+    // --- CSV Parsing Utility ---
+    /**
+     * Minimal CSV parser that handles quoted fields (ignoring escaped quotes within fields for simplicity).
+     * @param {string} str - CSV string.
+     * @returns {Array<Array<string>>} 2D array of rows and columns.
+     */
+    function parseCSV(str) {
+      const rows = str.trim().split('\n').filter(r => r.trim() !== '');
+      if (rows.length === 0) return [];
+      
+      const delimiter = ',';
+      
+      return rows.map(row => {
+        let inQuote = false;
+        let cell = '';
+        const rowData = [];
+        
+        for (let i = 0; i < row.length; i++) {
+          const char = row[i];
+          
+          if (char === '"') {
+            inQuote = !inQuote;
+          } else if (char === delimiter && !inQuote) {
+            rowData.push(cell.trim());
+            cell = '';
+          } else {
+            cell += char;
+          }
+        }
+        rowData.push(cell.trim()); // Push the last cell
+        return rowData;
+      });
+    }
+
+    // --- CSV Validation ---
+    const REQUIRED_HEADERS = ['customer_name', 'items', 'status', 'payment_method', 'timestamp', 'price_total'];
+
+    function validateOrderRow(row, headers, rowNumber) {
+        const order = { id: uid('csv') };
+        const errors = [];
+        
+        // 1. Map columns by header name (case-insensitive)
+        const colMap = {};
+        REQUIRED_HEADERS.forEach(reqHeader => {
+            const index = headers.findIndex(h => h.toLowerCase() === reqHeader);
+            colMap[reqHeader] = index;
+        });
+
+        // Object to hold raw values for initial checks
+        const rawValues = {};
+        let allRequiredPresent = true;
+
+        REQUIRED_HEADERS.forEach(field => {
+            const index = colMap[field];
+            const value = index !== -1 ? row[index] : undefined;
+            
+            if (value === undefined || value.trim() === '') {
+                errors.push(`Missing required field: ${field}`);
+                allRequiredPresent = false;
+            }
+            rawValues[field] = value ? value.trim() : '';
+        });
+
+        if (!allRequiredPresent) return { isValid: false, errors };
+
+        // 2. Validate status
+        const statusLower = rawValues.status.toLowerCase();
+        if (!STATUSES.includes(statusLower)) {
+            errors.push(`Invalid status value: "${rawValues.status}". Expected one of: ${VALID_STATUSES.join(', ')}`);
+        } else {
+            // Use the normalized status for demo data compatibility
+            order.status = VALID_STATUSES.find(s => s.toLowerCase() === statusLower); 
+        }
+
+        // 3. Validate payment_method
+        const paymentLower = rawValues.payment_method.toLowerCase();
+        if (!PAYMENTS.includes(paymentLower)) {
+            errors.push(`Invalid payment_method value: "${rawValues.payment_method}". Expected one of: ${VALID_PAYMENTS.join(', ')}`);
+        } else {
+            // Use the normalized payment for demo data compatibility
+            order.payment = VALID_PAYMENTS.find(p => p.toLowerCase() === paymentLower);
+        }
+
+        // 4. Validate timestamp
+        const date = new Date(rawValues.timestamp);
+        if (isNaN(date.getTime())) {
+            errors.push(`Invalid timestamp format: "${rawValues.timestamp}". Expected ISO8601 or YYYY-MM-DD HH:MM.`);
+        } else {
+            order.ts = date.toISOString();
+        }
+
+        // 5. Validate price_total
+        const price = parseFloat(rawValues.price_total);
+        if (isNaN(price)) {
+            errors.push(`Non-numeric price_total: "${rawValues.price_total}"`);
+        } else {
+            order.priceTotal = price.toFixed(2); // Store as string with 2 decimals
+        }
+
+        // 6. Process items string into [{name, qty}] format (assume qty is 1 for unique items)
+        const itemNames = rawValues.items.split(',').map(name => name.trim()).filter(name => name !== '');
+        if (itemNames.length === 0) {
+            errors.push('Items field is empty or improperly formatted.');
+        } else {
+            // Group and count items to create the array of {name, qty}
+            const itemCounts = {};
+            itemNames.forEach(name => {
+                itemCounts[name] = (itemCounts[name] || 0) + 1;
+            });
+            order.items = Object.entries(itemCounts).map(([name, qty]) => ({ name, qty }));
+        }
+
+        // Final check and construction
+        if (errors.length > 0) return { isValid: false, errors };
+
+        // Final object structure for card rendering
+        return {
+            isValid: true,
+            data: {
+                id: order.id,
+                customer: rawValues.customer_name,
+                items: order.items,
+                status: order.status,
+                payment: order.payment,
+                ts: order.ts,
+                priceTotal: order.priceTotal
+            }
+        };
+    }
+
+    // --- Import Handler ---
+    function handleImport(csvText) {
+      const allRows = parseCSV(csvText);
+      if (allRows.length < 2) {
+          showSummary(0, 0, ["CSV seems empty or only contains a header."], "Only Header/Empty File");
+          return;
+      }
+      
+      const headers = allRows[0].map(h => h.trim());
+      const dataRows = allRows.slice(1);
+
+      const importedOrders = [];
+      const invalidErrors = [];
+
+      dataRows.forEach((row, index) => {
+          const rowNumber = index + 2; // +2 for 0-indexed data row + header row
+          const validationResult = validateOrderRow(row, headers, rowNumber);
+
+          if (validationResult.isValid) {
+              importedOrders.push(validationResult.data);
+          } else {
+              validationResult.errors.forEach(err => {
+                  invalidErrors.push(`Row ${rowNumber}: ${err}`);
+              });
+          }
+      });
+
+      if (importedOrders.length > 0) {
+          // Prepend new orders to the current dataset
+          orders = [...importedOrders, ...orders]; 
+      } else if (invalidErrors.length > 0) {
+          // All rows invalid, keep existing data unchanged.
+          showSummary(0, invalidErrors.length, invalidErrors, "Import Failed: All rows were invalid. Existing data kept.");
+          return;
+      }
+      
+      render();
+      showSummary(importedOrders.length, invalidErrors.length, invalidErrors);
+    }
+
+    // --- UI/Toast ---
+    function showSummary(importedCount, skippedCount, errors, customMessage) {
+        const summaryEl = $('#importSummary');
+        const summaryTextEl = $('#summaryText');
+        const errorListContainerEl = $('#errorListContainer');
+        const errorDetailsEl = $('#errorDetails');
+        const toggleErrorsBtn = $('#toggleErrorsBtn');
+        
+        summaryTextEl.textContent = customMessage || `Imported ${importedCount} orders, skipped ${skippedCount} invalid rows.`;
+        
+        errorDetailsEl.innerHTML = '';
+        errorDetailsEl.classList.add('hidden'); // Ensure it starts collapsed
+
+        if (skippedCount > 0) {
+            errorListContainerEl.classList.remove('hidden');
+            errors.forEach(err => {
+                const li = document.createElement('li');
+                li.textContent = err;
+                errorDetailsEl.appendChild(li);
+            });
+            toggleErrorsBtn.onclick = () => errorDetailsEl.classList.toggle('hidden');
+        } else {
+            errorListContainerEl.classList.add('hidden');
+        }
+
+        summaryEl.classList.remove('hidden');
+        // Auto-hide the summary after 8 seconds
+        setTimeout(() => summaryEl.classList.add('hidden'), 8000);
+    }
+
+    // ------- Demo Data -------
+    function createDemoOrder(){
+      const id = uid('ord');
+      const customer = DEMO_NAMES[Math.floor(Math.random()*DEMO_NAMES.length)];
+      // Simplified item generation - assume qty 1 for unique items in the list
+      const numItems = Math.floor(Math.random()*3)+1;
+      const items = Array.from({length: numItems}, () => ({ name: MENU[Math.floor(Math.random()*MENU.length)], qty: Math.floor(Math.random()*3)+1 }));
+      const status = VALID_STATUSES[Math.floor(Math.random()*VALID_STATUSES.length)];
+      const payment = VALID_PAYMENTS[Math.floor(Math.random()*VALID_PAYMENTS.length)];
+      const ts = new Date(Date.now() - Math.floor(Math.random()*15)*60000).toISOString();
+      const priceTotal = (Math.random()*20 + 3).toFixed(2); // Added priceTotal
+      return { id, customer, items, status, payment, ts, priceTotal };
+    }
+
+    function seedDefaultOrders(count = 4) {
+        const tempOrders = [];
+        for(let i = 0; i < count; i++) {
+            tempOrders.push(createDemoOrder());
+        }
+        return tempOrders;
+    }
+
+    // ------- Smart Assistant (model-agnostic) - Using priceTotal in the summary bar for revenue calc is omitted but data field is integrated -------
+    const SmartAssistant = {
+      enabled: true,
+      suggest(){
+        if(!this.enabled) return [];
+        const queue = orders.filter(o => o.status !== 'ready' && o.status !== 'cancelled');
+        const counts = {};
+        queue.forEach(o => o.items.forEach(i => counts[i.name] = (counts[i.name]||0) + i.qty));
+
+        const suggestions = [];
+        // pastry batching
+        const pastryCount = Object.entries(counts).filter(([n])=>pastrySet.has(n)).reduce((s,[,c])=>s+c,0);
+        if(pastryCount >= 8){
+          suggestions.push({ id: uid('sg'), title: `Consider prepping more pastries — ${pastryCount} orders in queue`, rationale: 'Batch-baking reduces ticket time spikes during rush.'});
+        }
+        // espresso station load
+        const espressoLoad = Object.entries(counts).filter(([n])=>espressoSet.has(n)).reduce((s,[,c])=>s+c,0);
+        if(espressoLoad >= 10){
+          suggestions.push({ id: uid('sg'), title: `High espresso load — ${espressoLoad} drinks pending`, rationale: 'Dedicate a barista to shots and another to milk/finishers.'});
+        }
+        // many long-waiting tickets
+        const longWait = queue.filter(o => minutesSince(o.ts) > 10).length;
+        if(longWait >= 3){
+          suggestions.push({ id: uid('sg'), title: `Expedite ${longWait} long-waiting orders`, rationale: 'Prioritize oldest tickets; pre-assemble cold items while hot drinks brew.'});
+        }
+        // large single ticket
+        const large = queue.find(o => o.items.reduce((s,i)=>s+i.qty,0) >= 8);
+        if(large){
+          suggestions.push({ id: uid('sg'), title: `Large group order detected`, rationale: `Ticket ${large.id} has ${large.items.reduce((s,i)=>s+i.qty,0)} items; allocate extra hands temporarily.`});
+        }
+        return suggestions;
+      }
+    };
+
+    function renderAssistant(){
+      const box = $('#assistantList'); box.innerHTML = '';
+      const items = SmartAssistant.suggest();
+      items.forEach(s => {
+        const el = document.createElement('div');
+        el.className = 'p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-start gap-3';
+        el.innerHTML = `
+          <div class="text-lg">🤖</div>
+          <div class="flex-1">
+            <p class="text-sm font-semibold">${s.title}</p>
+            <p class="text-xs text-slate-600 mt-0.5">${s.rationale}</p>
+          </div>`;
+        box.appendChild(el);
+      });
+      if(items.length === 0){ box.innerHTML = '<p class="text-xs text-slate-500">No suggestions at the moment. Seed a few orders to see tips.</p>'; }
+    }
+
+    // ------- Render -------
+    /**
+     * Renders the order cards and the smart assistant suggestions.
+     */
+    function render(){
+      const grid = $('#ordersGrid'); grid.innerHTML='';
+      orders.forEach(o => grid.appendChild(renderCard(o)));
+      renderAssistant();
+    }
+
+    /**
+     * Renders a single order card.
+     * @param {object} order - The order data object.
+     * @returns {HTMLElement} The card element.
+     */
+    function renderCard(order){
+      const tpl = $('#orderCardTpl').content.cloneNode(true);
+      const card = tpl.children[0];
+
+      // Status badge color lookup for cleaner code
+      const statusColors = {
+        'ready': 'bg-emerald-50 text-emerald-700 border border-emerald-200',
+        'in progress': 'bg-sky-50 text-sky-700 border border-sky-200',
+        'cancelled': 'bg-red-50 text-red-700 border border-red-200',
+        'waiting': 'bg-amber-50 text-amber-700 border border-amber-200'
+      };
+
+      const statusEl = card.querySelector('.statusBadge');
+      statusEl.className = `statusBadge text-xs px-2 py-1 rounded-full font-medium ${statusColors[order.status] || ''}`;
+      statusEl.textContent = order.status;
+
+      // Payment badge
+      card.querySelector('.payBadge').textContent = order.payment;
+
+      // Text fields
+      card.querySelector('.customer').textContent = order.customer;
+      card.querySelector('.id').textContent = order.id;
+      card.querySelector('.ts').textContent = fmtTime(order.ts);
+      card.querySelector('.price').textContent = order.priceTotal ? fmtCurrency(order.priceTotal) : '';
+
+      // Items list
+      const ul = card.querySelector('.items');
+      ul.innerHTML = ''; // Clear previous
+      order.items.forEach(i => { const li=document.createElement('li'); li.textContent = `${i.name} × ${i.qty}`; ul.appendChild(li); });
+
+      return card;
+    }
+
+    // ------- Events -------
+    function wire(){
+      // Demo and Seed buttons
+      $('#addDemoBtn').addEventListener('click', () => { orders.unshift(createDemoOrder()); render(); });
+      $('#seedBtn').addEventListener('click', () => { for(let i=0;i<6;i++) orders.push(createDemoOrder()); render(); });
+      
+      // Assistant Toggle
+      // The styles for the toggle switch and knob are handled directly by CSS, so we only need to update the state here.
+      $('#assistantToggle').addEventListener('change', e => { 
+        SmartAssistant.enabled = e.target.checked; 
+        renderAssistant(); 
+      });
+
+      // CSV Upload Logic
+      $('#uploadCsvBtn').addEventListener('click', () => $('#csvFileInput').click());
+      $('#csvFileInput').addEventListener('change', (event) => {
+        const file = event.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            handleImport(e.target.result);
+          };
+          reader.readAsText(file);
+        }
+        event.target.value = ''; // Clear file input so same file can be uploaded again
+      });
+
+      // Reset Data Logic
+      $('#resetDataBtn').addEventListener('click', () => {
+        orders = [...defaultOrders];
+        render();
+        showSummary(defaultOrders.length, 0, [], "Data reset to default synthetic dataset.");
+      });
+    }
+
+    // ------- Init -------
+    function init(){ 
+      wire(); 
+      // Initialize default orders and store them for the reset function
+      defaultOrders = seedDefaultOrders(4);
+      orders = [...defaultOrders];
+      render(); 
+    }
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>
